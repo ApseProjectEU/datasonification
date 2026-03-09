@@ -35,6 +35,36 @@ main { display: grid; gap: 2rem; }
 
 .upload-zone:hover { border-color: #2ecc71; background: rgba(46, 204, 113, 0.1); }
 
+.input-methods { display: flex; flex-direction: column; gap: 1rem; }
+
+.record-section { text-align: center; }
+
+.record-btn {
+  width: 100%;
+  padding: 1rem;
+  font-size: 1rem;
+  background: #2ecc71;
+  color: #0A2F24;
+  border: none;
+  border-radius: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.record-btn:hover { background: #27ae60; }
+
+.record-btn.recording {
+  background: #e74c3c;
+  color: #fff;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
 .status { margin-top: 1rem; color: #2ecc71; text-align: center; }
 
 .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
