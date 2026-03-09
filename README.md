@@ -1,42 +1,16 @@
-# 🎵 Data Sonification
+# React + Vite
 
-Transform ecological soundscapes and data into generative music.
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
-## Features
+Currently, two official plugins are available:
 
-✅ Audio upload & analysis
-✅ Feature extraction (spectral centroid, energy, complexity)
-✅ Generative music synthesis
-✅ Real-time effects (reverb, delay, filter)
-✅ Multiple musical scales
-✅ BPM control (40-180)
-✅ Audio export
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
 
-## Tech Stack
+## React Compiler
 
-- React + Vite
-- Tone.js (synthesis & effects)
-- Meyda (audio feature extraction)
-- Web Audio API
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
 
-## Quick Start
-```bash
-npm install
-npm run dev
-```
+## Expanding the ESLint configuration
 
-## Deploy
-```bash
-npm run deploy
-```
-
-Live at: https://apseprojecteu.github.io/datasonification/
-
-## APSE Project
-
-Part of the APSE (Acoustic and Sonic Participatory Experiences) project.
-Erasmus+ KA210-YOU Grant: IT03-KA210-03-2024-YOU-85871379
-
-## License
-
-MIT
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
