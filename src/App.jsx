@@ -1,6 +1,11 @@
 import React, { useState, useRef } from 'react';
 import * as Tone from 'tone';
 import Meyda from 'meyda';
+import Spectrogram from './components/Spectrogram';
+import Waveform from './components/Waveform';
+import StepSequencer from './components/StepSequencer';
+import PresetManager from './components/PresetManager';
+import MIDIExporter from './components/MIDIExporter';
 
 export default function App() {
   const [audioBuffer, setAudioBuffer] = useState(null);
@@ -8,49 +13,71 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [bpm, setBpm] = useState(90);
   const [scale, setScale] = useState('major');
+  const [sequencerPattern, setSequencerPattern] = useState(null);
+
+  // Effects state
   const [reverbWet, setReverbWet] = useState(0.3);
   const [delayFeedback, setDelayFeedback] = useState(0.4);
   const [filterFreq, setFilterFreq] = useState(2000);
+  const [chorusDepth, setChorusDepth] = useState(0.5);
+  const [distortionAmount, setDistortionAmount] = useState(0);
+
+  // Synth voices state
+  const [activeVoices, setActiveVoices] = useState({
+    melody: true,
+    pad: true,
+    bass: true,
+    percussion: false
+  });
 
   const fileInputRef = useRef(null);
-  const synthRef = useRef(null);
+  const synthsRef = useRef({});
   const sequenceRef = useRef(null);
-  const reverbRef = useRef(null);
-  const delayRef = useRef(null);
-  const filterRef = useRef(null);
+  const effectsRef = useRef({});
 
-  // Audio chain setup
+  // Initialize audio chain with multiple voices and effects
   React.useEffect(() => {
     const reverb = new Tone.Reverb(4).toDestination();
     const delay = new Tone.FeedbackDelay('8n', 0.4).connect(reverb);
     const filter = new Tone.Filter(2000, 'lowpass').connect(delay);
-    const synth = new Tone.PolySynth(Tone.Synth).connect(filter);
+    const chorus = new Tone.Chorus(4, 2.5, 0.5).connect(filter);
+    const distortion = new Tone.Distortion(0).connect(chorus);
 
-    reverbRef.current = reverb;
-    delayRef.current = delay;
-    filterRef.current = filter;
-    synthRef.current = synth;
+    // Create multiple synth voices
+    const melodySynth = new Tone.PolySynth(Tone.Synth).connect(distortion);
+    const padSynth = new Tone.PolySynth(Tone.AMSynth).connect(distortion);
+    const bassSynth = new Tone.MonoSynth().connect(distortion);
+    const percSynth = new Tone.MembraneSynth().connect(distortion);
+
+    synthsRef.current = { melody: melodySynth, pad: padSynth, bass: bassSynth, percussion: percSynth };
+    effectsRef.current = { reverb, delay, filter, chorus, distortion };
 
     return () => {
-      synth.dispose();
-      reverb.dispose();
-      delay.dispose();
-      filter.dispose();
+      Object.values(synthsRef.current).forEach(synth => synth.dispose());
+      Object.values(effectsRef.current).forEach(effect => effect.dispose());
     };
   }, []);
 
   // Update effects
   React.useEffect(() => {
-    if (reverbRef.current) reverbRef.current.wet.value = reverbWet;
+    if (effectsRef.current.reverb) effectsRef.current.reverb.wet.value = reverbWet;
   }, [reverbWet]);
 
   React.useEffect(() => {
-    if (delayRef.current) delayRef.current.feedback.value = delayFeedback;
+    if (effectsRef.current.delay) effectsRef.current.delay.feedback.value = delayFeedback;
   }, [delayFeedback]);
 
   React.useEffect(() => {
-    if (filterRef.current) filterRef.current.frequency.value = filterFreq;
+    if (effectsRef.current.filter) effectsRef.current.filter.frequency.value = filterFreq;
   }, [filterFreq]);
+
+  React.useEffect(() => {
+    if (effectsRef.current.chorus) effectsRef.current.chorus.depth = chorusDepth;
+  }, [chorusDepth]);
+
+  React.useEffect(() => {
+    if (effectsRef.current.distortion) effectsRef.current.distortion.distortion = distortionAmount;
+  }, [distortionAmount]);
 
   React.useEffect(() => {
     Tone.Transport.bpm.value = bpm;
@@ -83,9 +110,11 @@ export default function App() {
           spectralCentroid: meyda.spectralCentroid,
           rms: meyda.rms,
           zcr: meyda.zcr,
+          spectralRolloff: meyda.spectralRolloff,
           basePitch: Math.max(48, Math.min(84, Math.round(meyda.spectralCentroid / 20))),
           energy: Math.min(meyda.rms * 10, 1),
-          complexity: Math.min(meyda.zcr / 100, 1)
+          complexity: Math.min(meyda.zcr / 100, 1),
+          brightness: Math.min(meyda.spectralRolloff / 8000, 1)
         };
 
         setFeatures(extractedFeatures);
@@ -100,7 +129,7 @@ export default function App() {
 
   // Generate musical sequence
   React.useEffect(() => {
-    if (!features || !synthRef.current) return;
+    if (!features) return;
 
     const scales = {
       major: [0, 2, 4, 5, 7, 9, 11],
@@ -112,13 +141,63 @@ export default function App() {
     const scaleNotes = scales[scale] || scales.major;
     const { basePitch, energy, complexity } = features;
 
-    const noteCount = Math.floor(8 + (complexity * 8));
+    if (sequencerPattern) {
+      // Use sequencer pattern
+      playSequencerPattern(sequencerPattern, scaleNotes, basePitch);
+    } else {
+      // Generate automatic pattern
+      generateAutoPattern(scaleNotes, basePitch, energy, complexity);
+    }
+  }, [features, scale, sequencerPattern, activeVoices]);
+
+  const playSequencerPattern = (pattern, scale, basePitch) => {
+    if (sequenceRef.current) {
+      if (Array.isArray(sequenceRef.current)) {
+        sequenceRef.current.forEach(seq => seq?.dispose());
+      } else {
+        sequenceRef.current?.dispose();
+      }
+    }
+
+    const voiceSequences = pattern.map((row, voiceIndex) => {
+      return row.map((isActive, step) => {
+        if (!isActive) return null;
+        const scaleStep = scale[step % scale.length];
+        const octaveShift = voiceIndex === 2 ? -12 : voiceIndex === 1 ? 12 : 0; // Bass lower, pad higher
+        return Tone.Frequency(basePitch + scaleStep + octaveShift, 'midi').toNote();
+      });
+    });
+
+    const sequences = voiceSequences.map((notes, voiceIndex) => {
+      const voiceName = ['melody', 'pad', 'bass', 'percussion'][voiceIndex];
+      if (!activeVoices[voiceName] || !synthsRef.current[voiceName]) return null;
+
+      return new Tone.Sequence((time, note) => {
+        if (note) {
+          synthsRef.current[voiceName].triggerAttackRelease(note, '8n', time);
+        }
+      }, notes, '16n');
+    }).filter(Boolean);
+
+    sequenceRef.current = sequences;
+  };
+
+  const generateAutoPattern = (scale, basePitch, energy, complexity) => {
+    if (sequenceRef.current) {
+      if (Array.isArray(sequenceRef.current)) {
+        sequenceRef.current.forEach(seq => seq?.dispose());
+      } else {
+        sequenceRef.current?.dispose();
+      }
+    }
+
+    const noteCount = Math.floor(16);
     const sequence = [];
     let currentPitch = basePitch;
 
     for (let i = 0; i < noteCount; i++) {
       if (Math.random() < energy) {
-        const scaleStep = scaleNotes[Math.floor(Math.random() * scaleNotes.length)];
+        const scaleStep = scale[Math.floor(Math.random() * scale.length)];
         const midiNote = currentPitch + scaleStep;
         const note = Tone.Frequency(midiNote, 'midi').toNote();
         sequence.push(note);
@@ -131,28 +210,32 @@ export default function App() {
       }
     }
 
-    if (sequenceRef.current) {
-      sequenceRef.current.dispose();
-    }
-
     const toneSequence = new Tone.Sequence((time, note) => {
-      if (note) {
-        synthRef.current.triggerAttackRelease(note, '8n', time);
+      if (note && activeVoices.melody && synthsRef.current.melody) {
+        synthsRef.current.melody.triggerAttackRelease(note, '8n', time);
       }
-    }, sequence, '4n');
+    }, sequence, '8n');
 
     sequenceRef.current = toneSequence;
-  }, [features, scale]);
+  };
 
   // Play/Stop control
   React.useEffect(() => {
     if (isPlaying) {
       Tone.start();
-      sequenceRef.current?.start(0);
+      if (Array.isArray(sequenceRef.current)) {
+        sequenceRef.current.forEach(seq => seq?.start(0));
+      } else {
+        sequenceRef.current?.start(0);
+      }
       Tone.Transport.start();
     } else {
       Tone.Transport.stop();
-      sequenceRef.current?.stop();
+      if (Array.isArray(sequenceRef.current)) {
+        sequenceRef.current.forEach(seq => seq?.stop());
+      } else {
+        sequenceRef.current?.stop();
+      }
     }
   }, [isPlaying]);
 
@@ -168,7 +251,16 @@ export default function App() {
       a.href = url;
       a.download = 'datasonification.webm';
       a.click();
-    }, 10000);
+      URL.revokeObjectURL(url);
+    }, 15000);
+  };
+
+  const loadPreset = (preset) => {
+    setBpm(preset.bpm);
+    setScale(preset.scale);
+    setReverbWet(preset.reverb);
+    setDelayFeedback(preset.delay);
+    setFilterFreq(preset.filter);
   };
 
   return (
@@ -180,8 +272,8 @@ export default function App() {
       </header>
 
       <main className="main-grid">
-        {/* Audio Upload */}
-        <section className="card">
+        {/* Audio Upload + Waveform */}
+        <section className="card full-width">
           <h2>1. Audio Source</h2>
           <div className="drop-zone" onClick={() => fileInputRef.current?.click()}>
             <p>📁 Upload Audio File</p>
@@ -194,12 +286,25 @@ export default function App() {
             onChange={handleFileUpload}
             style={{ display: 'none' }}
           />
-          {audioBuffer && <p className="status">✅ Audio loaded ({audioBuffer.duration.toFixed(1)}s)</p>}
+          {audioBuffer && (
+            <>
+              <p className="status">✅ Audio loaded ({audioBuffer.duration.toFixed(1)}s)</p>
+              <Waveform audioBuffer={audioBuffer} />
+            </>
+          )}
         </section>
+
+        {/* Spectrogram */}
+        {audioBuffer && (
+          <section className="card full-width">
+            <h2>2. Spectrogram</h2>
+            <Spectrogram audioBuffer={audioBuffer} />
+          </section>
+        )}
 
         {/* Features Display */}
         <section className="card">
-          <h2>2. Extracted Parameters</h2>
+          <h2>3. Extracted Parameters</h2>
           {features ? (
             <div className="feature-grid">
               <div className="feature-item">
@@ -215,8 +320,8 @@ export default function App() {
                 <span className="value">{(features.complexity * 100).toFixed(0)}%</span>
               </div>
               <div className="feature-item">
-                <label>Spectral Centroid</label>
-                <span className="value">{Math.round(features.spectralCentroid)} Hz</span>
+                <label>Brightness</label>
+                <span className="value">{(features.brightness * 100).toFixed(0)}%</span>
               </div>
             </div>
           ) : (
@@ -226,7 +331,7 @@ export default function App() {
 
         {/* Music Controls */}
         <section className="card">
-          <h2>3. Music Generation</h2>
+          <h2>4. Music Generation</h2>
           <div className="control-group">
             <label>BPM: {bpm}</label>
             <input
@@ -247,50 +352,73 @@ export default function App() {
               <option value="dorian">Dorian</option>
             </select>
           </div>
+
+          <div className="voice-toggles">
+            <h4>Active Voices</h4>
+            {Object.keys(activeVoices).map(voice => (
+              <label key={voice} className="voice-toggle">
+                <input
+                  type="checkbox"
+                  checked={activeVoices[voice]}
+                  onChange={(e) => setActiveVoices({...activeVoices, [voice]: e.target.checked})}
+                />
+                {voice.charAt(0).toUpperCase() + voice.slice(1)}
+              </label>
+            ))}
+          </div>
         </section>
+
+        {/* Step Sequencer */}
+        {features && (
+          <section className="card full-width">
+            <StepSequencer
+              pattern={sequencerPattern}
+              onPatternChange={setSequencerPattern}
+              voices={4}
+            />
+          </section>
+        )}
 
         {/* Effects Panel */}
         <section className="card">
-          <h2>4. Effects</h2>
+          <h2>5. Effects</h2>
           <div className="control-group">
             <label>Reverb: {(reverbWet * 100).toFixed(0)}%</label>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              value={reverbWet}
-              onChange={(e) => setReverbWet(parseFloat(e.target.value))}
-            />
+            <input type="range" min="0" max="1" step="0.01" value={reverbWet} onChange={(e) => setReverbWet(parseFloat(e.target.value))} />
           </div>
 
           <div className="control-group">
             <label>Delay: {(delayFeedback * 100).toFixed(0)}%</label>
-            <input
-              type="range"
-              min="0"
-              max="0.9"
-              step="0.01"
-              value={delayFeedback}
-              onChange={(e) => setDelayFeedback(parseFloat(e.target.value))}
-            />
+            <input type="range" min="0" max="0.9" step="0.01" value={delayFeedback} onChange={(e) => setDelayFeedback(parseFloat(e.target.value))} />
           </div>
 
           <div className="control-group">
             <label>Filter: {filterFreq} Hz</label>
-            <input
-              type="range"
-              min="100"
-              max="8000"
-              value={filterFreq}
-              onChange={(e) => setFilterFreq(parseInt(e.target.value))}
-            />
+            <input type="range" min="100" max="8000" value={filterFreq} onChange={(e) => setFilterFreq(parseInt(e.target.value))} />
+          </div>
+
+          <div className="control-group">
+            <label>Chorus: {(chorusDepth * 100).toFixed(0)}%</label>
+            <input type="range" min="0" max="1" step="0.01" value={chorusDepth} onChange={(e) => setChorusDepth(parseFloat(e.target.value))} />
+          </div>
+
+          <div className="control-group">
+            <label>Distortion: {(distortionAmount * 100).toFixed(0)}%</label>
+            <input type="range" min="0" max="1" step="0.01" value={distortionAmount} onChange={(e) => setDistortionAmount(parseFloat(e.target.value))} />
           </div>
         </section>
 
+        {/* Preset Manager */}
+        <section className="card">
+          <PresetManager
+            currentSettings={{ bpm, scale, reverb: reverbWet, delay: delayFeedback, filter: filterFreq }}
+            onLoadPreset={loadPreset}
+          />
+        </section>
+
         {/* Transport Controls */}
-        <section className="card transport">
-          <h2>5. Playback</h2>
+        <section className="card transport full-width">
+          <h2>6. Playback & Export</h2>
           <div className="transport-controls">
             <button
               className={`play-btn ${isPlaying ? 'playing' : ''}`}
@@ -317,8 +445,13 @@ export default function App() {
               onClick={handleExport}
               disabled={!features}
             >
-              💾 Export (10s)
+              💾 Export WAV (15s)
             </button>
+
+            <MIDIExporter
+              sequence={sequenceRef.current}
+              bpm={bpm}
+            />
           </div>
         </section>
       </main>
